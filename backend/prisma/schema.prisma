@@ -1,0 +1,913 @@
+// SIGO-Dental - Prisma Schema
+// Sprint 0 + Fase 1 (Core Administrativo y Turnos)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== AUTH & USERS ====================
+
+enum Role {
+  ADMIN_TI
+  RECEPCIONISTA
+  CAJERO
+  ODONTOLOGO
+  ESPECIALISTA
+  ASISTENTE_DENTAL
+  AUDITOR
+  CONTADOR
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  role          Role
+  isActive      Boolean   @default(true)
+  mfaEnabled    Boolean   @default(false)
+  mfaSecret     String?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  appointmentsAsDoctor Appointment[] @relation("DoctorAppointments")
+  clinicalNotes        ClinicalNote[]
+  auditLogs            AuditLog[]    @relation("ActorLogs")
+  createdPatients      Patient[]     @relation("CreatedBy")
+  invoicesCreated      Invoice[]     @relation("InvoiceCreator")
+  odontogramRecords    OdontogramRecord[] @relation("OdontogramAuthor")
+  periodontogramRecords PeriodontogramRecord[] @relation("PeriodontogramAuthor")
+  consentsCreated      Consent[] @relation("ConsentAuthor")
+  stockMovements       StockMovement[] @relation("StockMovementAuthor")
+  commissionRules      DoctorCommissionRule[] @relation("CommissionRules")
+  settlements          DoctorSettlement[] @relation("Settlements")
+  settlementsCreated   DoctorSettlement[] @relation("SettlementAuthor")
+  cashClosings         CashClosing[] @relation("CashClosings")
+  inventoryLocations   InventoryLocation[] @relation("LocationDoctor")
+  plansCreated         TreatmentPlan[] @relation("PlanCreator")
+  plansDiscountReviewed TreatmentPlan[] @relation("PlanDiscountReviewer")
+  onlinePayments       OnlinePayment[] @relation("OnlinePaymentCreator")
+  noteAddenda          ClinicalNoteAddendum[] @relation("AddendumAuthor")
+  prescriptions        Prescription[] @relation("PrescriptionDoctor")
+  vitalSigns           VitalSign[] @relation("VitalSignAuthor")
+  filesUploaded        PatientFile[] @relation("FileUploader")
+
+  @@map("users")
+}
+
+// ==================== PATIENTS ====================
+
+model Patient {
+  id                String    @id @default(cuid())
+  documentType      String    // CI, Pasaporte, etc.
+  documentNumber    String
+  firstName         String
+  lastName          String
+  birthDate         DateTime
+  gender            String?   // M, F, Otro
+  email             String?
+  phone             String?
+  address           String?
+  city              String?
+  emergencyContact  String?
+  emergencyPhone    String?
+  isMinor           Boolean   @default(false)
+  tutorName         String?
+  tutorDocument     String?
+  insuranceName     String?
+  insuranceNumber   String?
+  notes             String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdById       String?
+
+  // Relations
+  createdBy         User?              @relation("CreatedBy", fields: [createdById], references: [id])
+  medicalHistory    MedicalHistory?
+  appointments      Appointment[]
+  treatmentPlans    TreatmentPlan[]
+  invoices          Invoice[]
+  clinicalNotes          ClinicalNote[]
+  odontogramRecords      OdontogramRecord[]
+  periodontogramRecords  PeriodontogramRecord[]
+  consents               Consent[]
+  prescriptions          Prescription[]
+  vitalSigns             VitalSign[]
+  files                  PatientFile[]
+
+  @@unique([documentType, documentNumber])
+  @@index([lastName, firstName])
+  @@index([phone])
+  @@map("patients")
+}
+
+model MedicalHistory {
+  id                    String   @id @default(cuid())
+  patientId             String   @unique
+  systemicDiseases      String?  // JSON or text
+  allergies             String?  // critical: penicillin, etc.
+  surgicalHistory       String?
+  coagulopathies        String?
+  medications           String?
+  hasCriticalAlert      Boolean  @default(false)
+  criticalAlertReason   String?  // e.g. "Alergia a penicilina"
+  notes                 String?
+  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("medical_histories")
+}
+
+// ==================== CHAIRS & PROCEDURES ====================
+
+model Chair {
+  id          String   @id @default(cuid())
+  name        String   // "Sillón 1", "Consultorio A"
+  location    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  appointments Appointment[]
+  inventoryLocation InventoryLocation?
+
+  @@map("chairs")
+}
+
+/// Ubicación de stock: consultorio, sillón, almacén central o profesional
+model InventoryLocation {
+  id          String   @id @default(cuid())
+  code        String   @unique // e.g. "ALM-01", "SIL-1", "DOC-juan"
+  name        String   // "Almacén central", "Sillón 1", "Dr. García"
+  type        String   // WAREHOUSE | CHAIR | PROFESSIONAL | CONSULTORIO
+  chairId     String?  @unique // si type=CHAIR
+  doctorId    String?  // si type=PROFESSIONAL (User id)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  chair  Chair? @relation(fields: [chairId], references: [id])
+  doctor User?  @relation("LocationDoctor", fields: [doctorId], references: [id])
+  stocks InventoryStock[]
+  movements StockMovement[]
+
+  @@index([type])
+  @@map("inventory_locations")
+}
+
+/// Stock por ítem y ubicación (multi-ubicación)
+model InventoryStock {
+  id         String @id @default(cuid())
+  itemId     String
+  locationId String
+  quantity   Int    @default(0)
+  stockMin   Int    @default(0)
+  updatedAt  DateTime @updatedAt
+
+  item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, locationId])
+  @@index([locationId])
+  @@map("inventory_stocks")
+}
+
+model Procedure {
+  id              String   @id @default(cuid())
+  code            String   @unique // e.g. "RES-01"
+  name            String
+  description     String?
+  category        String?  // Restauración, Endodoncia, Cirugía, etc.
+  basePrice       Decimal  @db.Decimal(12, 2)
+  durationMinutes Int      @default(30)
+  requiresLab     Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  treatmentPlanItems TreatmentPlanItem[]
+  appointmentItems   AppointmentItem[]
+  recipes            ProcedureRecipe[]
+  commissionRules    DoctorCommissionRule[]
+
+  @@map("procedures")
+}
+
+// ==================== APPOINTMENTS ====================
+
+enum AppointmentStatus {
+  PROGRAMADO
+  CONFIRMADO
+  EN_SALA_ESPERA
+  EN_ATENCION
+  ATENDIDO
+  CANCELADO
+  NO_ASISTIO
+}
+
+model Appointment {
+  id            String            @id @default(cuid())
+  patientId     String
+  doctorId      String
+  chairId       String
+  startAt       DateTime
+  endAt         DateTime
+  status        AppointmentStatus @default(PROGRAMADO)
+  reason        String?
+  notes         String?
+  reminderSent  Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+  doctor  User    @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  chair   Chair   @relation(fields: [chairId], references: [id])
+
+  items         AppointmentItem[]
+  prescriptions Prescription[]
+  vitalSigns    VitalSign[]
+
+  @@index([startAt, endAt])
+  @@index([doctorId, startAt])
+  @@index([chairId, startAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+model AppointmentItem {
+  id            String @id @default(cuid())
+  appointmentId String
+  procedureId   String
+  quantity      Int    @default(1)
+  notes         String?
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  procedure   Procedure   @relation(fields: [procedureId], references: [id])
+
+  @@map("appointment_items")
+}
+
+// ==================== TREATMENT PLANS & BUDGETS ====================
+
+enum DiscountStatus {
+  NONE     // sin descuento
+  PENDING  // requiere autorización
+  APPROVED
+  REJECTED
+}
+
+enum TreatmentPlanStatus {
+  BORRADOR
+  ENVIADO
+  APROBADO_PARCIAL
+  APROBADO_TOTAL
+  RECHAZADO
+  EN_CURSO
+  FINALIZADO
+}
+
+model TreatmentPlan {
+  id          String              @id @default(cuid())
+  patientId   String
+  title       String?
+  status      TreatmentPlanStatus @default(BORRADOR)
+  totalAmount Decimal             @default(0) @db.Decimal(12, 2)
+  discount    Decimal             @default(0) @db.Decimal(12, 2)
+  notes       String?
+  approvedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  // RF-07: descuentos autorizados
+  createdById          String?
+  discountStatus       DiscountStatus @default(NONE)
+  discountReason       String?
+  discountReviewedById String?
+  discountReviewedAt   DateTime?
+  discountReviewNote   String?
+
+  patient            Patient             @relation(fields: [patientId], references: [id])
+  items              TreatmentPlanItem[]
+  createdBy          User?               @relation("PlanCreator", fields: [createdById], references: [id])
+  discountReviewedBy User?               @relation("PlanDiscountReviewer", fields: [discountReviewedById], references: [id])
+
+  @@index([patientId, createdAt])
+  @@index([discountStatus])
+  @@map("treatment_plans")
+}
+
+model TreatmentPlanItem {
+  id              String  @id @default(cuid())
+  treatmentPlanId String
+  procedureId     String
+  quantity        Int     @default(1)
+  unitPrice       Decimal @db.Decimal(12, 2)
+  labCost         Decimal @default(0) @db.Decimal(12, 2)
+  discount        Decimal @default(0) @db.Decimal(12, 2)
+  isApproved      Boolean @default(false)
+  phase           Int     @default(1) // para presupuestos multinivel
+  notes           String?
+
+  treatmentPlan TreatmentPlan @relation(fields: [treatmentPlanId], references: [id], onDelete: Cascade)
+  procedure     Procedure     @relation(fields: [procedureId], references: [id])
+
+  @@map("treatment_plan_items")
+}
+
+// ==================== BILLING ====================
+
+enum InvoiceStatus {
+  BORRADOR
+  EMITIDA
+  PAGADA
+  ANULADA
+  PARCIAL
+}
+
+enum PaymentMethod {
+  EFECTIVO
+  TARJETA_CREDITO
+  TARJETA_DEBITO
+  TRANSFERENCIA
+  SEGURO
+  MIXTO
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  number        String        @unique // número fiscal
+  patientId     String
+  createdById   String
+  status        InvoiceStatus @default(BORRADOR)
+  subtotal      Decimal       @db.Decimal(12, 2)
+  tax           Decimal       @default(0) @db.Decimal(12, 2)
+  discount      Decimal       @default(0) @db.Decimal(12, 2)
+  total         Decimal       @db.Decimal(12, 2)
+  fiscalData    Json?         // datos del PAC / timbrado
+  issuedAt      DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  patient          Patient              @relation(fields: [patientId], references: [id])
+  createdBy        User                 @relation("InvoiceCreator", fields: [createdById], references: [id])
+  payments         Payment[]
+  items            InvoiceItem[]
+  electronicDocs   ElectronicDocument[]
+  onlinePayments   OnlinePayment[]
+
+  @@index([patientId, createdAt])
+  @@index([status, createdAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  total       Decimal @db.Decimal(12, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  invoiceId     String
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(12, 2)
+  reference     String?       // número de operación, voucher, etc.
+  paidAt        DateTime      @default(now())
+  notes         String?
+
+  invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  onlinePayment OnlinePayment?
+
+  @@index([invoiceId])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+
+// ==================== CLINICAL NOTES (SOEP) ====================
+
+model ClinicalNote {
+  id          String   @id @default(cuid())
+  patientId   String
+  authorId    String
+  subjective  String?  // S
+  objective   String?  // O
+  evaluation  String?  // E
+  plan        String?  // P
+  isLocked    Boolean  @default(false)
+  lockedAt    DateTime?
+  signedAt    DateTime?
+  signatureData String? // base64 de firma o hash de firma digital
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+  author  User    @relation(fields: [authorId], references: [id])
+  addenda ClinicalNoteAddendum[]
+
+  @@index([patientId, createdAt])
+  @@map("clinical_notes")
+}
+
+/// RF-05 / RN-01: corrección de una nota bloqueada. Inmutable y firmada al crearse.
+model ClinicalNoteAddendum {
+  id            String   @id @default(cuid())
+  noteId        String
+  authorId      String
+  reason        String   // motivo de la corrección
+  content       String   // texto de la adenda
+  signedAt      DateTime @default(now())
+  signatureData String
+  createdAt     DateTime @default(now())
+
+  note   ClinicalNote @relation(fields: [noteId], references: [id])
+  author User         @relation("AddendumAuthor", fields: [authorId], references: [id])
+
+  @@index([noteId, createdAt])
+  @@map("clinical_note_addenda")
+}
+
+// ==================== RECETAS ====================
+
+enum PrescriptionStatus {
+  ACTIVE
+  ANNULLED
+}
+
+model Prescription {
+  id              String             @id @default(cuid())
+  number          String             @unique // correlativo legible: RX-2026-000123
+  patientId       String
+  doctorId        String
+  appointmentId   String?
+  diagnosis       String?
+  indications     String?            // indicaciones generales
+  status          PrescriptionStatus @default(ACTIVE)
+  allergyOverride String?            // justificación si se prescribió pese a una alerta
+  signedAt        DateTime           @default(now())
+  signatureData   String
+  annulledAt      DateTime?
+  annulReason     String?
+  createdAt       DateTime           @default(now())
+
+  patient     Patient            @relation(fields: [patientId], references: [id])
+  doctor      User               @relation("PrescriptionDoctor", fields: [doctorId], references: [id])
+  appointment Appointment?       @relation(fields: [appointmentId], references: [id])
+  items       PrescriptionItem[]
+
+  @@index([patientId, createdAt])
+  @@index([doctorId, createdAt])
+  @@map("prescriptions")
+}
+
+model PrescriptionItem {
+  id             String  @id @default(cuid())
+  prescriptionId String
+  medication     String  // principio activo
+  presentation   String? // tabletas 500 mg, suspensión 250 mg/5 ml
+  dose           String  // 1 tableta
+  frequency      String  // cada 8 horas
+  duration       String  // 5 días
+  route          String  @default("Oral")
+  quantity       String? // 15 tabletas
+  instructions   String?
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@map("prescription_items")
+}
+
+// ==================== SIGNOS VITALES ====================
+
+model VitalSign {
+  id               String   @id @default(cuid())
+  patientId        String
+  appointmentId    String?
+  recordedById     String
+  systolic         Int?     // mmHg
+  diastolic        Int?     // mmHg
+  heartRate        Int?     // lpm
+  respiratoryRate  Int?     // rpm
+  temperature      Decimal? @db.Decimal(4, 1) // °C
+  oxygenSaturation Int?     // %
+  glucose          Int?     // mg/dL
+  weightKg         Decimal? @db.Decimal(5, 1)
+  heightCm         Decimal? @db.Decimal(5, 1)
+  alerts           Json?    // alertas calculadas al registrar
+  notes            String?
+  recordedAt       DateTime @default(now())
+
+  patient     Patient      @relation(fields: [patientId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+  recordedBy  User         @relation("VitalSignAuthor", fields: [recordedById], references: [id])
+
+  @@index([patientId, recordedAt])
+  @@map("vital_signs")
+}
+
+// ==================== ARCHIVOS (S3) ====================
+
+enum FileKind {
+  RX_PANORAMICA
+  RX_PERIAPICAL
+  RX_OTRA
+  FOTO_INTRAORAL
+  FOTO_EXTRAORAL
+  DOCUMENTO
+  OTRO
+}
+
+/// Archivos planos del paciente (radiografías, fotos, PDFs) guardados en S3/MinIO.
+model PatientFile {
+  id           String   @id @default(cuid())
+  patientId    String
+  kind         FileKind
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String   @unique
+  sha256       String
+  notes        String?
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  patient    Patient @relation(fields: [patientId], references: [id])
+  uploadedBy User    @relation("FileUploader", fields: [uploadedById], references: [id])
+
+  @@index([patientId, createdAt])
+  @@map("patient_files")
+}
+
+// ==================== ODONTOGRAM ====================
+
+model OdontogramRecord {
+  id          String   @id @default(cuid())
+  patientId   String
+  toothNumber String   // FDI: "11","21"... o Universal "1".."32"
+  notation    String   @default("FDI") // FDI | UNIVERSAL
+  // surfaces JSON: { "M": "caries", "O": "restoration", "D": null, "V": "sealant", "L": null, "status": "present" }
+  // status del diente: present | missing | implant | pontic | crown | etc.
+  surfaces    Json
+  notes       String?
+  recordedAt  DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  recordedById String?
+
+  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recordedBy User?   @relation("OdontogramAuthor", fields: [recordedById], references: [id])
+
+  @@unique([patientId, toothNumber, notation])
+  @@index([patientId])
+  @@map("odontogram_records")
+}
+
+// ==================== PERIODONTOGRAM ====================
+
+model PeriodontogramRecord {
+  id              String   @id @default(cuid())
+  patientId       String
+  toothNumber     String   // FDI
+  // 6 puntos de sondaje: DB, B, MB, DL, L, ML (o equivalentes)
+  probingDepths   Json     // { "DB": 3, "B": 2, "MB": 3, "DL": 4, "L": 3, "ML": 2 }
+  gingivalMargin  Json?    // mismos 6 puntos (mm, negativo = recesión)
+  clinicalAttachmentLevel Json? // calculado o capturado
+  furcation       Int?     // 0-3
+  mobility        Int?     // 0-3
+  bleedingOnProbing Boolean @default(false)
+  plaque          Boolean  @default(false)
+  notes           String?
+  examDate        DateTime @default(now())
+  recordedById    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recordedBy User?   @relation("PeriodontogramAuthor", fields: [recordedById], references: [id])
+
+  @@index([patientId, examDate])
+  @@map("periodontogram_records")
+}
+
+// ==================== CONSENTIMIENTOS INFORMADOS ====================
+
+enum ConsentStatus {
+  PENDING
+  SIGNED
+  REVOKED
+  EXPIRED
+}
+
+model Consent {
+  id              String        @id @default(cuid())
+  patientId       String
+  procedureName   String        // nombre del procedimiento
+  templateKey     String?       // clave del formato legal (ej: "extraccion", "endodoncia")
+  content         String        // texto legal completo (HTML o markdown)
+  status          ConsentStatus @default(PENDING)
+  // Firma
+  signatureData   String?       // base64 imagen de firma o hash
+  signedAt        DateTime?
+  signedByName    String?       // nombre de quien firmó (paciente o tutor)
+  otpCode         String?       // código OTP enviado (temporal)
+  otpExpiresAt    DateTime?
+  otpVerified     Boolean       @default(false)
+  // Metadata
+  createdById     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  patient   Patient @relation(fields: [patientId], references: [id])
+  createdBy User    @relation("ConsentAuthor", fields: [createdById], references: [id])
+
+  @@index([patientId, status])
+  @@map("consents")
+}
+
+
+// ==================== INVENTARIO ====================
+
+model InventoryItem {
+  id              String   @id @default(cuid())
+  sku             String   @unique
+  name            String
+  description     String?
+  category        String?  // anestesia, resina, guantes, etc.
+  unit            String   @default("unidad") // unidad, caja, ml, gr
+  stockMin        Int      @default(0)  // mínimo global (fallback)
+  stockCurrent    Int      @default(0)  // cache agregado de todas las ubicaciones
+  costAverage     Decimal  @default(0) @db.Decimal(12, 2)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  movements        StockMovement[]
+  procedureRecipes ProcedureRecipe[]
+  stocks           InventoryStock[]
+
+  @@index([category])
+  @@map("inventory_items")
+}
+
+model StockMovement {
+  id              String   @id @default(cuid())
+  itemId          String
+  locationId      String?  // ubicación afectada (null = global legacy)
+  type            String   // IN | OUT | ADJUST | AUTO_DEDUCT | TRANSFER
+  quantity        Int      // positivo siempre; el tipo indica dirección
+  unitCost        Decimal? @db.Decimal(12, 2)
+  reason          String?
+  referenceType   String?  // Appointment, Invoice, Manual, Transfer
+  referenceId     String?
+  performedById   String?
+  createdAt       DateTime @default(now())
+
+  item        InventoryItem      @relation(fields: [itemId], references: [id])
+  location    InventoryLocation? @relation(fields: [locationId], references: [id])
+  performedBy User?              @relation("StockMovementAuthor", fields: [performedById], references: [id])
+
+  @@index([itemId, createdAt])
+  @@index([locationId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+/// Receta de consumo: qué insumos se descuentan al completar un procedimiento
+model ProcedureRecipe {
+  id            String @id @default(cuid())
+  procedureId   String
+  itemId        String
+  quantity      Int    @default(1)
+
+  procedure Procedure     @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@unique([procedureId, itemId])
+  @@map("procedure_recipes")
+}
+
+// ==================== HONORARIOS / COMISIONES ====================
+
+enum CommissionType {
+  PERCENTAGE          // % del honorario
+  FIXED               // monto fijo por procedimiento
+  PERCENTAGE_AFTER_COST // % después de descontar lab/materiales
+}
+
+model DoctorCommissionRule {
+  id            String         @id @default(cuid())
+  doctorId      String
+  procedureId   String?        // null = regla general para todos los procedimientos
+  type          CommissionType
+  value         Decimal        @db.Decimal(12, 2) // % o monto según type
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  doctor    User      @relation("CommissionRules", fields: [doctorId], references: [id])
+  procedure Procedure? @relation(fields: [procedureId], references: [id])
+
+  @@index([doctorId])
+  @@map("doctor_commission_rules")
+}
+
+model DoctorSettlement {
+  id            String   @id @default(cuid())
+  doctorId      String
+  periodFrom    DateTime
+  periodTo      DateTime
+  totalFees     Decimal  @db.Decimal(12, 2) // honorarios brutos generados
+  totalCosts    Decimal  @default(0) @db.Decimal(12, 2)
+  totalCommission Decimal @db.Decimal(12, 2)
+  status        String   @default("DRAFT") // DRAFT | APPROVED | PAID
+  notes         String?
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  doctor    User @relation("Settlements", fields: [doctorId], references: [id])
+  createdBy User @relation("SettlementAuthor", fields: [createdById], references: [id])
+  items     DoctorSettlementItem[]
+
+  @@index([doctorId, periodFrom])
+  @@map("doctor_settlements")
+}
+
+model DoctorSettlementItem {
+  id            String  @id @default(cuid())
+  settlementId  String
+  appointmentId String?
+  procedureName String
+  feeAmount     Decimal @db.Decimal(12, 2)
+  costAmount    Decimal @default(0) @db.Decimal(12, 2)
+  commission    Decimal @db.Decimal(12, 2)
+
+  settlement DoctorSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@map("doctor_settlement_items")
+}
+
+// ==================== CIERRE DE CAJA ====================
+
+model CashClosing {
+  id              String   @id @default(cuid())
+  closingDate     DateTime @db.Date
+  // Conteos físicos ingresados por el cajero (ciego)
+  countedCash     Decimal  @db.Decimal(12, 2)
+  countedCard     Decimal  @default(0) @db.Decimal(12, 2)
+  countedTransfer Decimal  @default(0) @db.Decimal(12, 2)
+  countedOther    Decimal  @default(0) @db.Decimal(12, 2)
+  // Totales teóricos del sistema (se llenan al confirmar, no se muestran antes)
+  systemCash      Decimal? @db.Decimal(12, 2)
+  systemCard      Decimal? @db.Decimal(12, 2)
+  systemTransfer  Decimal? @db.Decimal(12, 2)
+  systemOther     Decimal? @db.Decimal(12, 2)
+  systemTotal     Decimal? @db.Decimal(12, 2)
+  difference      Decimal? @db.Decimal(12, 2) // counted - system
+  status          String   @default("OPEN") // OPEN | CLOSED
+  notes           String?
+  closedById      String
+  closedAt        DateTime?
+  createdAt       DateTime @default(now())
+
+  closedBy User @relation("CashClosings", fields: [closedById], references: [id])
+
+  @@unique([closingDate])
+  @@map("cash_closings")
+}
+
+// ==================== AUDIT LOG ====================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String?
+  action      String
+  entity      String
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation("ActorLogs", fields: [actorId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ==================== FACTURACIÓN ELECTRÓNICA (SRI Ecuador) ====================
+
+enum ElectronicDocStatus {
+  FIRMADO           // XML generado y firmado, pendiente de envío
+  PENDIENTE_ENVIO   // falló la conexión con el SRI: se reintenta automáticamente
+  RECIBIDA          // el SRI lo recibió; falta la autorización
+  DEVUELTA          // rechazado en recepción (errores en mensajes)
+  EN_PROCESAMIENTO
+  AUTORIZADO
+  NO_AUTORIZADO
+}
+
+/// Secuencial por establecimiento + punto de emisión + tipo de comprobante
+model FiscalSequence {
+  id      String @id @default(cuid())
+  codDoc  String // 01 = factura
+  estab   String // 001
+  ptoEmi  String // 001
+  next    Int    @default(1)
+
+  @@unique([codDoc, estab, ptoEmi])
+  @@map("fiscal_sequences")
+}
+
+/// Comprobante electrónico enviado al SRI (uno por intento; se conserva el historial)
+model ElectronicDocument {
+  id                  String              @id @default(cuid())
+  invoiceId           String
+  codDoc              String              @default("01")
+  environment         String              // 1 = pruebas, 2 = producción
+  estab               String
+  ptoEmi              String
+  sequential          String              // 9 dígitos
+  accessKey           String              @unique // clave de acceso (49 dígitos)
+  issueDate           DateTime
+  status              ElectronicDocStatus @default(FIRMADO)
+  signedXml           String
+  authorizedXml       String?
+  authorizationNumber String?
+  authorizationDate   DateTime?
+  messages            Json?
+  attempts            Int                 @default(0)
+  lastAttemptAt       DateTime?
+  storageKey          String?             // copia del XML autorizado en S3 (conservación 7 años)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId, createdAt])
+  @@index([status, lastAttemptAt])
+  @@map("electronic_documents")
+}
+
+// ==================== PAGOS EN LÍNEA ====================
+
+enum OnlinePaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+model OnlinePayment {
+  id                String              @id @default(cuid())
+  invoiceId         String
+  provider          String              // payphone | stripe | mock
+  clientTxId        String              @unique // id propio enviado a la pasarela
+  amount            Decimal             @db.Decimal(12, 2)
+  currency          String              @default("USD")
+  status            OnlinePaymentStatus @default(PENDING)
+  checkoutUrl       String?
+  providerRef       String?             // id de la transacción/sesión en la pasarela
+  authorizationCode String?
+  cardBrand         String?
+  cardLast4         String?
+  cardType          String?             // Credit | Debit
+  paymentId         String?             @unique // Payment creado al confirmarse
+  createdById       String
+  raw               Json?
+  paidAt            DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  payment   Payment? @relation(fields: [paymentId], references: [id])
+  createdBy User     @relation("OnlinePaymentCreator", fields: [createdById], references: [id])
+
+  @@index([invoiceId, createdAt])
+  @@index([status, createdAt])
+  @@index([provider, providerRef])
+  @@map("online_payments")
+}

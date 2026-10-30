@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.next/
+coverage/
+**/*.spec.ts
+src/test-utils/
+loadtest/

@@ -1,0 +1,17 @@
+# Configuración de gitleaks: reglas por defecto + excepciones de valores de ejemplo
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Valores de ejemplo y datos de prueba"
+paths = [
+  '''.*\.spec\.ts$''',
+  '''docs/.*\.md$''',
+  '''\.env\.example$''',
+  '''deploy/\.env\.prod\.example$''',
+]
+regexes = [
+  '''sigo_secret_2026''',
+  '''sigo_minio_secret_2026''',
+  '''whsec_test''',
+]

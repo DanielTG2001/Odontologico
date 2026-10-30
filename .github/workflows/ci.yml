@@ -1,0 +1,79 @@
+# SIGO-Dental – Integración continua (SRS 8.2)
+#  - Pruebas + cobertura ≥ 80 % en endpoints críticos
+#  - npm audit sin vulnerabilidades altas/críticas
+#  - SAST (Semgrep, OWASP Top 10) sin hallazgos ERROR
+#  - Build de imágenes Docker
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma validate
+      - name: Pruebas con cobertura (umbral 80 % en críticos)
+        run: npm run test:cov -- --ci
+      - run: npm run build
+      - name: Dependencias sin vulnerabilidades altas/críticas
+        run: npm audit --omit=dev --audit-level=high
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: coverage-backend, path: backend/coverage }
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run build
+        env: { NEXT_PUBLIC_API_URL: /api }
+      - run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    name: Secretos en el código (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # revisa todo el historial, no solo el último commit
+      # Gratis en cuentas personales; en organizaciones de GitHub requiere el secreto GITLEAKS_LICENSE
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    container: { image: semgrep/semgrep }
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          semgrep scan --error --severity ERROR
+          --config p/owasp-top-ten --config p/nodejsscan --config p/typescript --config p/secrets
+          --exclude '**/*.spec.ts' --exclude loadtest
+          backend/src frontend/src
+
+  docker:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t sigo-api ./backend
+      - run: docker build -t sigo-web --build-arg NEXT_PUBLIC_API_URL=/api ./frontend

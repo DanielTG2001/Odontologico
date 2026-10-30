@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sigo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sigo
+      POSTGRES_PASSWORD: sigo_secret_2026
+      POSTGRES_DB: sigo_dental
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sigo -d sigo_dental"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sigo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # Almacenamiento de archivos (Rx, fotos, PDFs) – API compatible con S3
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: sigo-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: sigo_minio
+      MINIO_ROOT_PASSWORD: sigo_minio_secret_2026
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
