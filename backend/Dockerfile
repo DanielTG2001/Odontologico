@@ -25,4 +25,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/health/live || exit 1
 # tini reenvía SIGTERM → apagado ordenado (enableShutdownHooks)
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
