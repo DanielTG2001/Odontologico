@@ -95,7 +95,7 @@ export default function TreatmentsPage() {
 
   async function reviewDiscount(id: string, approve: boolean) {
     const note = approve ? undefined : window.prompt('Motivo del rechazo:') || '';
-    if (!approve && !note.trim()) return;
+    if (!approve && !note?.trim()) return;
     try {
       await api(`/treatments/${id}/discount/review`, { method: 'POST', body: JSON.stringify({ approve, note }) });
       setMessage(approve ? 'Descuento autorizado' : 'Descuento rechazado');
